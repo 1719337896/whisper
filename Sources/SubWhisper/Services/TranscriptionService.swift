@@ -318,7 +318,8 @@ final class TranscriptionService: ObservableObject {
         model: WhisperModel,
         language: String? = nil,
         promptPreset: ChinesePromptPreset = .none,
-        customVocabulary: String = ""
+        customVocabulary: String = "",
+        customPrompt: String = ""
     ) async {
         segments = []
         detectedLanguage = ""
@@ -341,7 +342,11 @@ final class TranscriptionService: ObservableObject {
             // 没有字符串入口，中文必须先用 tokenizer 编码。
             // 若 tokenizer 尚未就绪，则本次跳过提示词（不影响转录本身），
             // 避免因编码失败中断整个流程。
-            let promptText = buildPrompt(preset: promptPreset, vocabulary: customVocabulary)
+            let promptText = buildPrompt(
+                preset: promptPreset,
+                vocabulary: customVocabulary,
+                customPrompt: customPrompt
+            )
             var promptTokens: [Int]? = nil
             if !promptText.isEmpty {
                 if let tokenizer = kit.tokenizer {
@@ -435,9 +440,12 @@ final class TranscriptionService: ObservableObject {
     }
 
     /// 拼接提示词：预设 + 用户自定义专有名词
-    private func buildPrompt(preset: ChinesePromptPreset, vocabulary: String) -> String {
+    private func buildPrompt(preset: ChinesePromptPreset, vocabulary: String, customPrompt: String) -> String {
         var parts: [String] = []
-        if !preset.rawValue.isEmpty {
+        let custom = customPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !custom.isEmpty {
+            parts.append(custom)
+        } else if !preset.rawValue.isEmpty {
             parts.append(preset.rawValue)
         }
         let vocab = vocabulary.trimmingCharacters(in: .whitespacesAndNewlines)

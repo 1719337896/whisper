@@ -16,6 +16,7 @@ struct ContentView: View {
     @State private var languageHint: String = ""
     @State private var promptPreset: ChinesePromptPreset = .simplified
     @State private var vocabulary: String = ""
+    @State private var customPrompt: String = ""
     @State private var showHistory = false
     @State private var corrections: [CorrectionRule] = HomophoneCorrector.load().map {
         CorrectionRule(wrong: $0.key, right: $0.value)
@@ -191,6 +192,15 @@ struct ContentView: View {
                     .font(.subheadline)
             }
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("自定义提示词（可选）")
+                    .font(.subheadline)
+                TextField("留空则使用上面的风格。例如：这是一节物理课，请用简体中文并加标点。", text: $customPrompt, axis: .vertical)
+                    .lineLimit(2...5)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.subheadline)
+            }
+
             ForEach($corrections) { $rule in
                 HStack {
                     TextField("错字", text: $rule.wrong)
@@ -212,7 +222,7 @@ struct ContentView: View {
         } header: {
             Text("中文优化")
         } footer: {
-            Text("专有名词会提示模型。同音替换会在识别完成后生效，例如把「在见」改成「再见」，并会记住。")
+            Text("填写自定义提示词后会优先使用它，并和专有名词一起传给模型。同音替换会在识别完成后生效。")
         }
         .onChange(of: corrections) { _, _ in
             persistCorrections()
@@ -342,7 +352,8 @@ struct ContentView: View {
                 model: selectedModel,
                 language: lang,
                 promptPreset: promptPreset,
-                customVocabulary: vocabulary
+                customVocabulary: vocabulary,
+                customPrompt: customPrompt
             )
         }
     }
