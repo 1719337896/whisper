@@ -407,8 +407,21 @@ final class TranscriptionService: ObservableObject {
                 }
             }
 
-            segments = fitForReading(collected)
+            segments = fitForReading(collected).map { seg in
+                var item = seg
+                item.text = HomophoneCorrector.apply(seg.text, rules: HomophoneCorrector.load())
+                return item
+            }
             stage = .finished
+            if !segments.isEmpty {
+                let title = fileURL.deletingPathExtension().lastPathComponent
+                _ = try? TranscriptStore.save(
+                    segments: segments,
+                    title: title,
+                    language: detectedLanguage,
+                    modelName: model.displayName
+                )
+            }
             try? FileManager.default.removeItem(at: audioURL)
 
         } catch {

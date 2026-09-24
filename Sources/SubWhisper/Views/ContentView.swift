@@ -16,6 +16,10 @@ struct ContentView: View {
     @State private var languageHint: String = ""
     @State private var promptPreset: ChinesePromptPreset = .simplified
     @State private var vocabulary: String = ""
+    @State private var showHistory = false
+    @State private var corrections: [CorrectionRule] = HomophoneCorrector.load().map {
+        CorrectionRule(wrong: $0.key, right: $0.value)
+    }
 
     private var selectedModel: WhisperModel {
         service.allModels.first { $0.id == selectedModelID }
@@ -61,6 +65,11 @@ struct ContentView: View {
             .navigationTitle("SubWhisper")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button { showHistory = true } label: {
+                        Label("历史", systemImage: "clock.arrow.circlepath")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button { showModelSheet = true } label: {
                         Label("模型", systemImage: "cube.box")
                     }
@@ -76,6 +85,9 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showModelSheet) {
                 ModelManagerView(service: service, selectedModelID: $selectedModelID)
+            }
+            .sheet(isPresented: $showHistory) {
+                HistoryView()
             }
             .sheet(isPresented: $showShare) {
                 ShareSheet(items: shareItems)
@@ -178,10 +190,32 @@ struct ContentView: View {
                     .textFieldStyle(.roundedBorder)
                     .font(.subheadline)
             }
+
+            ForEach($corrections) { $rule in
+                HStack {
+                    TextField("错字", text: $rule.wrong)
+                    Image(systemName: "arrow.right")
+                        .foregroundStyle(.secondary)
+                    TextField("正确写法", text: $rule.right)
+                }
+            }
+            .onDelete { offsets in
+                corrections.remove(atOffsets: offsets)
+                persistCorrections()
+            }
+
+            Button {
+                corrections.append(CorrectionRule(wrong: "", right: ""))
+            } label: {
+                Label("添加同音替换", systemImage: "plus")
+            }
         } header: {
             Text("中文优化")
         } footer: {
-            Text("提示词会作为 initial prompt 传给模型。实测把专有名词列进去能明显提升人名与术语的识别准确率。")
+            Text("专有名词会提示模型。同音替换会在识别完成后生效，例如把「在见」改成「再见」，并会记住。")
+        }
+        .onChange(of: corrections) { _, _ in
+            persistCorrections()
         }
     }
 
@@ -265,6 +299,14 @@ struct ContentView: View {
     }
 
     // MARK: - Actions
+
+    private func persistCorrections() {
+        var rules: [String: String] = [:]
+        for rule in corrections where !rule.wrong.isEmpty && !rule.right.isEmpty {
+            rules[rule.wrong] = rule.right
+        }
+        HomophoneCorrector.save(rules)
+    }
 
     private func handleImport(_ result: Result<[URL], Error>) {
         switch result {
@@ -412,4 +454,56 @@ struct ShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+struct CorrectionRule: Identifiable, Hashable {
+    let id = UUID()
+    var wrong: String
+    var right: String
+}
+
+struct HistoryView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var records = TranscriptStore.loadIndex()
+    @State private var shareItems: [Any] = []
+    @State private var showShare = false
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if records.isEmpty {
+                    ContentUnavailableView("还没有识别记录", systemImage: "clock", description: Text("识别完成后会自动保存 SRT"))
+                } else {
+                    List {
+                        ForEach(records) { record in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(record.title).font(.headline)
+                                Text("\(record.createdAt.formatted(date: .abbreviated, time: .shortened)) · \(record.cueCount) 条")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                shareItems = [TranscriptStore.fileURL(for: record)]
+                                showShare = true
+                            }
+                        }
+                        .onDelete { offsets in
+                            offsets.map { records[$0] }.forEach(TranscriptStore.delete)
+                            records = TranscriptStore.loadIndex()
+                        }
+                    }
+                }
+            }
+            .navigationTitle("识别历史")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+            .sheet(isPresented: $showShare) {
+                ShareSheet(items: shareItems)
+            }
+        }
+    }
 }
