@@ -7,8 +7,8 @@ import WhisperKit
 enum TranscriptionStage: Equatable {
     case idle
     case downloadingModel(progress: Double, message: String)
-    case loadingModel
-    case extractingAudio
+    case loadingModel(progress: Double)
+    case extractingAudio(progress: Double)
     case transcribing(progress: Double)
     case finished
     case failed(String)
@@ -24,12 +24,21 @@ enum TranscriptionStage: Equatable {
         switch self {
         case .idle: return "待命"
         case .downloadingModel(let p, let msg):
-            return "下载模型 \(Int(p * 100))% \(msg.isEmpty ? "" : "· \(msg)")"
-        case .loadingModel: return "加载模型…"
-        case .extractingAudio: return "提取音轨…"
-        case .transcribing(let p): return "识别中 \(Int(p * 100))%"
+            return "下载模型 \(Int((p * 100).rounded()))%\(msg.isEmpty ? "" : " · \(msg)")"
+        case .loadingModel(let p): return "加载模型 \(Int((p * 100).rounded()))%"
+        case .extractingAudio(let p): return "提取音轨 \(Int((p * 100).rounded()))%"
+        case .transcribing(let p): return "识别中 \(Int((p * 100).rounded()))%"
         case .finished: return "完成"
         case .failed(let msg): return "失败：\(msg)"
+        }
+    }
+
+    var fraction: Double? {
+        switch self {
+        case .downloadingModel(let p, _), .loadingModel(let p), .extractingAudio(let p), .transcribing(let p):
+            return min(max(p, 0), 1)
+        default:
+            return nil
         }
     }
 }
@@ -141,7 +150,10 @@ final class TranscriptionService: ObservableObject {
                 progressCallback: { [weak self] progress in
                     let fraction = progress.fractionCompleted
                     Task { @MainActor in
-                        self?.stage = .downloadingModel(
+                        guard let self else { return }
+                        let current = self.stage.fraction ?? 0
+                        guard fraction >= current - 0.001 else { return }
+                        self.stage = .downloadingModel(
                             progress: fraction,
                             message: model.approximateSize
                         )
@@ -279,7 +291,7 @@ final class TranscriptionService: ObservableObject {
             return kit
         }
 
-        stage = .loadingModel
+        stage = .loadingModel(progress: 0.35)
         let dir = modelDirectory(for: model)
         let localPath = FileManager.default.fileExists(atPath: dir.path) ? dir.path : nil
 
@@ -313,8 +325,12 @@ final class TranscriptionService: ObservableObject {
         promptWarning = nil
         do {
             // 1. 音轨
-            stage = .extractingAudio
-            let audioURL = try await AudioExtractor.extractAudio(from: fileURL)
+            stage = .extractingAudio(progress: 0.08)
+            let audioURL = try await AudioExtractor.extractAudio(from: fileURL) { fraction in
+                Task { @MainActor in
+                    self.stage = .extractingAudio(progress: fraction)
+                }
+            }
 
             // 2. 模型
             let kit = try await loadModel(model)
@@ -423,6 +439,8 @@ final class TranscriptionService: ObservableObject {
     private func updateTranscriptionProgress(_ progress: TranscriptionProgress) {
         let done = Double(progress.windowId) + 1
         let fraction = min(done / max(estimatedTotalWindows, 1), 0.99)
+        let current = stage.fraction ?? 0
+        guard fraction >= current - 0.001 else { return }
         stage = .transcribing(progress: fraction)
     }
 

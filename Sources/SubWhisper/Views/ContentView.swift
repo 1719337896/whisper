@@ -48,12 +48,12 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             List {
+                if service.stage.isBusy { progressSection }
                 modelSection
                 fileSection
                 chineseSection
                 optionsSection
                 if let warn = service.promptWarning { warningSection(warn) }
-                if service.stage.isBusy { progressSection }
                 if !service.segments.isEmpty { resultSection }
                 if case .failed(let msg) = service.stage { errorSection(msg) }
             }
@@ -216,17 +216,17 @@ struct ContentView: View {
     }
 
     private var progressSection: some View {
-        Section("进度") {
+        Section {
             VStack(alignment: .leading, spacing: 8) {
-                Text(service.stage.description).font(.subheadline)
-                if case .downloadingModel(let p, _) = service.stage {
-                    ProgressView(value: p)
-                } else if case .transcribing(let p) = service.stage {
-                    ProgressView(value: p)
-                } else {
-                    ProgressView()
+                Text(service.stage.description)
+                    .font(.subheadline.monospacedDigit())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let fraction = service.stage.fraction {
+                    ProgressView(value: fraction)
+                        .animation(nil, value: fraction)
                 }
             }
+            .padding(.vertical, 4)
         }
     }
 
