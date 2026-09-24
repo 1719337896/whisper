@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct ContentView: View {
@@ -33,8 +34,12 @@ struct ContentView: View {
     ]
 
     private var importableTypes: [UTType] {
-        var types: [UTType] = [.movie, .video, .audio, .mpeg4Movie, .quickTimeMovie]
-        for id in ["public.mp3", "com.microsoft.waveform-audio", "public.mpeg-4-audio", "public.aiff-audio"] {
+        var types: [UTType] = [.movie, .video, .audiovisualContent, .audio, .mpeg4Movie, .quickTimeMovie, .data, .item]
+        for id in [
+            "public.mp3", "com.microsoft.waveform-audio", "public.mpeg-4-audio", "public.aiff-audio",
+            "public.mpeg-4", "com.apple.quicktime-movie", "public.avi", "public.mpeg",
+            "org.matroska.mkv", "public.3gpp", "public.3gpp2", "com.apple.m4v-video"
+        ] {
             if let t = UTType(id) { types.append(t) }
         }
         return types
@@ -61,11 +66,14 @@ struct ContentView: View {
                     }
                 }
             }
-            .fileImporter(
-                isPresented: $showImporter,
-                allowedContentTypes: importableTypes,
-                allowsMultipleSelection: false
-            ) { handleImport($0) }
+            .background {
+                DocumentPickerHost(
+                    isPresented: $showImporter,
+                    contentTypes: importableTypes
+                ) { urls in
+                    handleImport(.success(urls))
+                }
+            }
             .sheet(isPresented: $showModelSheet) {
                 ModelManagerView(service: service, selectedModelID: $selectedModelID)
             }
@@ -349,6 +357,47 @@ struct SubtitleListView: View {
         }
         .sheet(isPresented: $showShare) {
             ShareSheet(items: shareItems)
+        }
+    }
+}
+
+// MARK: - 文件选择
+
+private struct DocumentPickerHost: UIViewControllerRepresentable {
+    @Binding var isPresented: Bool
+    let contentTypes: [UTType]
+    let onPick: ([URL]) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIViewController(context: Context) -> UIViewController {
+        UIViewController()
+    }
+
+    func updateUIViewController(_ controller: UIViewController, context: Context) {
+        context.coordinator.parent = self
+        if isPresented, controller.presentedViewController == nil {
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: contentTypes, asCopy: true)
+            picker.delegate = context.coordinator
+            picker.allowsMultipleSelection = false
+            picker.shouldShowFileExtensions = true
+            controller.present(picker, animated: true)
+        } else if !isPresented, controller.presentedViewController is UIDocumentPickerViewController {
+            controller.dismiss(animated: true)
+        }
+    }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        var parent: DocumentPickerHost
+        init(_ parent: DocumentPickerHost) { self.parent = parent }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            parent.isPresented = false
+            parent.onPick(urls)
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            parent.isPresented = false
         }
     }
 }
