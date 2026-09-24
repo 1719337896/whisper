@@ -373,9 +373,9 @@ final class TranscriptionService: ObservableObject {
                 detectLanguage: language == nil,
                 skipSpecialTokens: true,
                 withoutTimestamps: false,
-                wordTimestamps: true,      // 开启后段落切分更准，字幕断句更好
+                wordTimestamps: true,
                 promptTokens: promptTokens,
-                chunkingStrategy: .vad
+                chunkingStrategy: .none
             )
 
             let results: [TranscriptionResult] = try await kit.transcribe(
@@ -412,7 +412,7 @@ final class TranscriptionService: ObservableObject {
                 }
             }
 
-            segments = fitForReading(collected).map { seg in
+            segments = preserveTiming(collected).map { seg in
                 var item = seg
                 item.text = HomophoneCorrector.apply(seg.text, rules: HomophoneCorrector.load())
                 return item
@@ -465,57 +465,21 @@ final class TranscriptionService: ObservableObject {
         stage = .transcribing(progress: fraction)
     }
 
-    /// 切成短字幕：优先在标点处断开，并限制每条的时长和字数。
-    /// 不再把相邻短句合并成长段，避免字幕提前消失。
-    private func fitForReading(
-        _ input: [SubtitleSegment],
-        maxDuration: Double = 4.0,
-        maxChars: Int = 18
-    ) -> [SubtitleSegment] {
-        var out: [SubtitleSegment] = []
-        for seg in input {
-            let pieces = splitCue(seg.text, maxChars: maxChars)
-            guard !pieces.isEmpty else { continue }
-            let weights = pieces.map { max(Double($0.count), 1) }
-            let total = weights.reduce(0, +)
-            let span = max(seg.end - seg.start, 0.3)
-            var cursor = seg.start
-            for (index, piece) in pieces.enumerated() {
-                let end = index == pieces.count - 1
-                    ? seg.end
-                    : min(seg.end, cursor + span * weights[index] / total)
-                out.append(SubtitleSegment(start: cursor, end: max(end, cursor + 0.3), text: piece))
-                cursor = end
-            }
-        }
-        return clampCueDuration(out, maxDuration: maxDuration)
-    }
-
-    private func splitCue(_ text: String, maxChars: Int) -> [String] {
-        let breaks = CharacterSet(charactersIn: "。！？!?；;，,、\n")
-        var pieces: [String] = []
-        var current = ""
-        for character in text {
-            current.append(character)
-            let isBreak = character.unicodeScalars.contains { breaks.contains($0) }
-            if isBreak || current.count >= maxChars {
-                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { pieces.append(trimmed) }
-                current = ""
-            }
-        }
-        let tail = current.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !tail.isEmpty { pieces.append(tail) }
-        return pieces
-    }
-
-    /// 一条字幕最多停留 maxDuration 秒，避免长句盖住后面的画面。
-    private func clampCueDuration(_ input: [SubtitleSegment], maxDuration: Double) -> [SubtitleSegment] {
-        input.enumerated().map { index, seg in
+    /// 保留模型给出的起止时间，只修正重叠和无效区间。
+    private func preserveTiming(_ input: [SubtitleSegment]) -> [SubtitleSegment] {
+        let sorted = input.sorted { $0.start < $1.start }
+        return sorted.enumerated().map { index, seg in
             var item = seg
-            let nextStart = index + 1 < input.count ? input[index + 1].start : .infinity
-            item.end = min(item.end, item.start + maxDuration, nextStart)
-            if item.end <= item.start { item.end = item.start + 0.3 }
+            let nextStart = index + 1 < sorted.count ? sorted[index + 1].start : item.end
+            if item.end <= item.start {
+                item.end = item.start + 0.4
+            }
+            if nextStart > item.start {
+                item.end = min(item.end, nextStart)
+            }
+            if item.end <= item.start {
+                item.end = item.start + 0.3
+            }
             return item
         }
     }
