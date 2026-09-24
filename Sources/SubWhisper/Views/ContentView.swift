@@ -456,7 +456,7 @@ struct ShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-struct CorrectionRule: Identifiable, Hashable {
+struct CorrectionRule: Identifiable, Hashable, Equatable {
     let id = UUID()
     var wrong: String
     var right: String

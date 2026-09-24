@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import CoreMedia
 
 /// 音频抽取：把视频/任意音频转成 Whisper 要求的 16kHz 单声道 WAV
 enum AudioExtractor {
@@ -23,7 +24,10 @@ enum AudioExtractor {
     private static let targetChannels: UInt32 = 1
 
     /// 从任意媒体文件抽取音频，输出 16kHz mono WAV 到临时目录
-    static func extractAudio(from url: URL) async throws -> URL {
+    static func extractAudio(
+        from url: URL,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> URL {
         let asset = AVURLAsset(url: url)
 
         // 确认有音轨
@@ -36,12 +40,16 @@ enum AudioExtractor {
             .appendingPathComponent("subwhisper-audio-\(UUID().uuidString).wav")
 
         // 用 AVAssetReader 手工转为 16kHz mono PCM，避免 AVAssetExportSession 的格式限制
-        try await convertToWAV(asset: asset, outputURL: outputURL)
+        try await convertToWAV(asset: asset, outputURL: outputURL, onProgress: onProgress)
         return outputURL
     }
 
     /// 使用 AVAssetReader + AVAssetWriter 做重采样与声道下混
-    private static func convertToWAV(asset: AVURLAsset, outputURL: URL) async throws {
+    private static func convertToWAV(
+        asset: AVURLAsset,
+        outputURL: URL,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws {
         guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
             throw ExtractError.noAudioTrack
         }
@@ -77,17 +85,24 @@ enum AudioExtractor {
         }
         writer.startSession(atSourceTime: .zero)
 
-        // 在后台队列顺序写入
+        let duration = CMTimeGetSeconds(try await asset.load(.duration))
         let queue = DispatchQueue(label: "com.subwhisper.audio.convert")
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             writerInput.requestMediaDataWhenReady(on: queue) {
                 while writerInput.isReadyForMoreMediaData {
                     guard let sample = readerOutput.copyNextSampleBuffer() else {
+                        onProgress?(1)
                         writerInput.markAsFinished()
                         writer.finishWriting {
                             continuation.resume()
                         }
                         return
+                    }
+                    if duration.isFinite, duration > 0 {
+                        let seconds = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample))
+                        if seconds.isFinite {
+                            onProgress?(min(max(seconds / duration, 0), 0.99))
+                        }
                     }
                     if !writerInput.append(sample) {
                         writerInput.markAsFinished()
