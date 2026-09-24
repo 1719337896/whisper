@@ -34,6 +34,8 @@ targets:
       - path: Sources/SubWhisper
       - path: Resources
         buildPhase: resources
+        excludes:
+          - Info.plist
     dependencies:
       - package: ArgmaxOSS
         product: WhisperKit
