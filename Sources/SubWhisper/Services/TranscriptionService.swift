@@ -407,7 +407,7 @@ final class TranscriptionService: ObservableObject {
                 }
             }
 
-            segments = mergeAdjacent(collected)
+            segments = fitForReading(collected)
             stage = .finished
             try? FileManager.default.removeItem(at: audioURL)
 
@@ -444,25 +444,59 @@ final class TranscriptionService: ObservableObject {
         stage = .transcribing(progress: fraction)
     }
 
-    /// 合并相邻过短片段，让字幕更易读
-    private func mergeAdjacent(
+    /// 切成短字幕：优先在标点处断开，并限制每条的时长和字数。
+    /// 不再把相邻短句合并成长段，避免字幕提前消失。
+    private func fitForReading(
         _ input: [SubtitleSegment],
-        minDuration: Double = 0.8,
-        maxChars: Int = 42
+        maxDuration: Double = 4.0,
+        maxChars: Int = 18
     ) -> [SubtitleSegment] {
         var out: [SubtitleSegment] = []
         for seg in input {
-            if var last = out.last,
-               seg.start - last.end < 0.35,
-               (last.end - last.start) < minDuration || last.text.count < maxChars / 2 {
-                last.end = seg.end
-                last.text = last.text + " " + seg.text
-                out[out.count - 1] = last
-            } else {
-                out.append(seg)
+            let pieces = splitCue(seg.text, maxChars: maxChars)
+            guard !pieces.isEmpty else { continue }
+            let weights = pieces.map { max(Double($0.count), 1) }
+            let total = weights.reduce(0, +)
+            let span = max(seg.end - seg.start, 0.3)
+            var cursor = seg.start
+            for (index, piece) in pieces.enumerated() {
+                let end = index == pieces.count - 1
+                    ? seg.end
+                    : min(seg.end, cursor + span * weights[index] / total)
+                out.append(SubtitleSegment(start: cursor, end: max(end, cursor + 0.3), text: piece))
+                cursor = end
             }
         }
-        return out
+        return clampCueDuration(out, maxDuration: maxDuration)
+    }
+
+    private func splitCue(_ text: String, maxChars: Int) -> [String] {
+        let breaks = CharacterSet(charactersIn: "。！？!?；;，,、\n")
+        var pieces: [String] = []
+        var current = ""
+        for character in text {
+            current.append(character)
+            let isBreak = character.unicodeScalars.contains { breaks.contains($0) }
+            if isBreak || current.count >= maxChars {
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { pieces.append(trimmed) }
+                current = ""
+            }
+        }
+        let tail = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !tail.isEmpty { pieces.append(tail) }
+        return pieces
+    }
+
+    /// 一条字幕最多停留 maxDuration 秒，避免长句盖住后面的画面。
+    private func clampCueDuration(_ input: [SubtitleSegment], maxDuration: Double) -> [SubtitleSegment] {
+        input.enumerated().map { index, seg in
+            var item = seg
+            let nextStart = index + 1 < input.count ? input[index + 1].start : .infinity
+            item.end = min(item.end, item.start + maxDuration, nextStart)
+            if item.end <= item.start { item.end = item.start + 0.3 }
+            return item
+        }
     }
 
     func reset() {
