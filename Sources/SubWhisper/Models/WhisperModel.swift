@@ -130,7 +130,7 @@ struct WhisperModel: Identifiable, Hashable, Codable {
 
     /// 默认模型：按设备内存挑选
     static var recommended: WhisperModel {
-        let memoryGB = Double(ProcessInfo.processInfo.memoryGB)
+        let memoryGB = ProcessInfo.memoryGB
         if memoryGB >= 7 {
             return officialModels[0]                       // large-v3 turbo 压缩版
         } else if memoryGB >= 5 {
